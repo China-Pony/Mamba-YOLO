@@ -568,6 +568,14 @@ class RTDETRDetectionModel(DetectionModel):
         return x
 
 
+class MambaYOLORTDETRModel(RTDETRDetectionModel):
+    """Mamba-YOLO with RT-DETR Decoder for end-to-end object detection."""
+
+    def __init__(self, cfg="Mamba-YOLO-L-rtdetr.yaml", ch=3, nc=None, verbose=True):
+        super().__init__(cfg=cfg, ch=ch, nc=nc, verbose=verbose)
+
+
+
 class WorldModel(DetectionModel):
     """YOLOv8 World Model."""
 
@@ -1012,7 +1020,7 @@ def guess_model_task(model):
         m = cfg["head"][-1][-2].lower()  # output module name
         if m in {"classify", "classifier", "cls", "fc"}:
             return "classify"
-        if m == "detect":
+        if m in {"detect", "rtdetrdecoder"}:
             return "detect"
         if m == "segment":
             return "segment"
@@ -1044,7 +1052,7 @@ def guess_model_task(model):
                 return "pose"
             elif isinstance(m, OBB):
                 return "obb"
-            elif isinstance(m, (Detect, WorldDetect)):
+            elif isinstance(m, (Detect, WorldDetect, RTDETRDecoder)):
                 return "detect"
 
     # Guess from model filename

@@ -43,6 +43,6 @@ if __name__ == '__main__':
     task_type = {
         "train": YOLO(model_conf).train(**args),
         "val": YOLO(model_conf).val(**args),
-        "test": YOLO(model_conf).test(**args),
+        #"test": YOLO(model_conf).test(**args), # 未写测试代码，暂不测试
     }
     task_type.get(task)
