@@ -1,4 +1,5 @@
 from .common_utils_mbyolo import *
+from .FDConv import FDConv
 
 __all__ = ("VSSBlock", "SimpleStem", "VisionClueMerge", "XSSBlock")
 
@@ -447,21 +448,79 @@ class VSSBlock(nn.Module):
 
 作用是将输入图像（假设 640x640）快速下采样到合适尺寸（如 160x160），同时保留更多细节。
 """
+# 1. 原代码
+# class SimpleStem(nn.Module):
+#     def __init__(self, inp, embed_dim, ks=3):
+#         super().__init__()
+#         self.hidden_dims = embed_dim // 2
+#         self.conv = nn.Sequential(
+#             nn.Conv2d(inp, self.hidden_dims, kernel_size=ks, stride=2, padding=autopad(ks, d=1), bias=False),
+#             nn.BatchNorm2d(self.hidden_dims),
+#             nn.GELU(),
+#             nn.Conv2d(self.hidden_dims, embed_dim, kernel_size=ks, stride=2, padding=autopad(ks, d=1), bias=False),
+#             nn.BatchNorm2d(embed_dim),
+#             nn.SiLU(),
+#         )
+
+#     def forward(self, x):
+#         return self.conv(x)
+
+# 2. 替换Simple Stem中的全部卷积块
 class SimpleStem(nn.Module):
     def __init__(self, inp, embed_dim, ks=3):
         super().__init__()
         self.hidden_dims = embed_dim // 2
         self.conv = nn.Sequential(
-            nn.Conv2d(inp, self.hidden_dims, kernel_size=ks, stride=2, padding=autopad(ks, d=1), bias=False),
+            FDConv(
+                in_channels=inp,
+                out_channels=self.hidden_dims,
+                kernel_size=ks,
+                stride=2,
+                padding=autopad(ks, d=1),
+                bias=False,
+                kernel_num=4,
+                use_fdconv_if_c_gt=16,   # inp=3 时会自动退化为普通 Conv2d
+                use_fbm_if_k_in=[3],
+                use_fbm_for_stride=True, # stride>1 也启用 FBM
+            ),
             nn.BatchNorm2d(self.hidden_dims),
             nn.GELU(),
-            nn.Conv2d(self.hidden_dims, embed_dim, kernel_size=ks, stride=2, padding=autopad(ks, d=1), bias=False),
+            FDConv(
+                in_channels=self.hidden_dims,
+                out_channels=embed_dim,
+                kernel_size=ks,
+                stride=2,
+                padding=autopad(ks, d=1),
+                bias=False,
+                kernel_num=4,
+                use_fdconv_if_c_gt=16,
+                use_fbm_if_k_in=[3],
+                use_fbm_for_stride=True,
+            ),
             nn.BatchNorm2d(embed_dim),
             nn.SiLU(),
         )
-
     def forward(self, x):
         return self.conv(x)
+
+# 2. 替换Simple Stem中的第二层（更省显存）
+# self.conv = nn.Sequential(
+#      nn.Conv2d(inp, self.hidden_dims, kernel_size=ks, stride=2, padding=autopad(ks, d=1), bias=False),
+#      nn.BatchNorm2d(self.hidden_dims),
+#      nn.GELU(),
+#      FDConv(
+#          in_channels=self.hidden_dims,
+#          out_channels=embed_dim,
+#          kernel_size=ks,
+#          stride=2,
+#          padding=autopad(ks, d=1),
+#          bias=False,
+#          kernel_num=4,
+#          use_fbm_for_stride=True,
+#      ),
+#      nn.BatchNorm2d(embed_dim),
+#      nn.SiLU(),
+# )
 
 """
 对应论文的 Vision Clue Merge（下采样模块）：
