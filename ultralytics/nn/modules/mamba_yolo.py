@@ -1,4 +1,5 @@
 from .common_utils_mbyolo import *
+from .FDConv import FDConv
 
 __all__ = ("VSSBlock", "SimpleStem", "VisionClueMerge", "XSSBlock")
 
@@ -229,6 +230,30 @@ class SS2D(nn.Module):
 
 作用：增强局部特征和通道间的交互，弥补 SSM 可能忽略的细节。
 """
+# 1. 原代码
+# class RGBlock(nn.Module):
+#     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.,
+#                  channels_first=False):
+#         super().__init__()
+#         out_features = out_features or in_features
+#         hidden_features = hidden_features or in_features
+#         hidden_features = int(2 * hidden_features / 3)
+#         self.fc1 = nn.Conv2d(in_features, hidden_features * 2, kernel_size=1)
+#         self.dwconv = nn.Conv2d(hidden_features, hidden_features, kernel_size=3, stride=1, padding=1, bias=True,
+#                                 groups=hidden_features)
+#         self.act = act_layer()
+#         self.fc2 = nn.Conv2d(hidden_features, out_features, kernel_size=1)
+#         self.drop = nn.Dropout(drop)
+
+#     def forward(self, x):
+#         x, v = self.fc1(x).chunk(2, dim=1)
+#         x = self.act(self.dwconv(x) + x) * v
+#         x = self.drop(x)
+#         x = self.fc2(x)
+#         x = self.drop(x)
+#         return x
+
+# 2. DWConv替换为FDConv
 class RGBlock(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.,
                  channels_first=False):
@@ -237,8 +262,19 @@ class RGBlock(nn.Module):
         hidden_features = hidden_features or in_features
         hidden_features = int(2 * hidden_features / 3)
         self.fc1 = nn.Conv2d(in_features, hidden_features * 2, kernel_size=1)
-        self.dwconv = nn.Conv2d(hidden_features, hidden_features, kernel_size=3, stride=1, padding=1, bias=True,
-                                groups=hidden_features)
+        self.dwconv = FDConv(
+            in_channels=hidden_features,
+            out_channels=hidden_features,
+            kernel_size=3,
+            stride=1,
+            padding=1,
+            groups=hidden_features,     # 仍然保持深度可分离特性
+            bias=True,
+            kernel_num=4,               # 论文里小模型常用 4，通道大时可改 8
+            # reduction=0.0625,
+            # use_fdconv_if_c_gt=16,      # hidden<16 时自动回退 nn.Conv2d，对 T 尺度友好
+            # use_fbm_if_k_in=[3],        # 3x3 启用 FBM，针对高频信息调制
+        )
         self.act = act_layer()
         self.fc2 = nn.Conv2d(hidden_features, out_features, kernel_size=1)
         self.drop = nn.Dropout(drop)
