@@ -1,4 +1,5 @@
 from .common_utils_mbyolo import *
+from .FDConv import FDConv
 
 __all__ = ("VSSBlock", "SimpleStem", "VisionClueMerge", "XSSBlock")
 
@@ -318,11 +319,30 @@ class XSSBlock(nn.Module):
     ):
         super().__init__()
 
+        # self.in_proj = nn.Sequential(
+        #     nn.Conv2d(in_channels, hidden_dim, kernel_size=1, stride=1, padding=0, bias=False),
+        #     nn.BatchNorm2d(hidden_dim),
+        #     nn.SiLU()
+        # ) if in_channels != hidden_dim else nn.Identity()
+
         self.in_proj = nn.Sequential(
-            nn.Conv2d(in_channels, hidden_dim, kernel_size=1, stride=1, padding=0, bias=False),
+            FDConv(
+                in_channels=in_channels,
+                out_channels=hidden_dim,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+                bias=False,
+                kernel_num=4,
+                use_fdconv_if_c_gt=16,
+                use_fdconv_if_k_in=[1, 3],
+            ),
             nn.BatchNorm2d(hidden_dim),
             nn.SiLU()
         ) if in_channels != hidden_dim else nn.Identity()
+
+
+        
         self.hidden_dim = hidden_dim
         # ==========SSM============================
         self.norm = norm_layer(hidden_dim)
@@ -392,8 +412,24 @@ class VSSBlock(nn.Module):
         self.post_norm = post_norm
 
         # proj
+        # self.proj_conv = nn.Sequential(
+        #     nn.Conv2d(in_channels, hidden_dim, kernel_size=1, stride=1, padding=0, bias=True),
+        #     nn.BatchNorm2d(hidden_dim),
+        #     nn.SiLU()
+        # )
+
         self.proj_conv = nn.Sequential(
-            nn.Conv2d(in_channels, hidden_dim, kernel_size=1, stride=1, padding=0, bias=True),
+            FDConv(
+                in_channels=in_channels,
+                out_channels=hidden_dim,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+                bias=True,
+                kernel_num=4,
+                use_fdconv_if_c_gt=16,
+                use_fdconv_if_k_in=[1, 3],
+            ),
             nn.BatchNorm2d(hidden_dim),
             nn.SiLU()
         )
