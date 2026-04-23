@@ -1,4 +1,5 @@
 from .common_utils_mbyolo import *
+from .fdconv import FDConv
 
 __all__ = ("VSSBlock", "SimpleStem", "VisionClueMerge", "XSSBlock")
 
@@ -237,8 +238,11 @@ class RGBlock(nn.Module):
         hidden_features = hidden_features or in_features
         hidden_features = int(2 * hidden_features / 3)
         self.fc1 = nn.Conv2d(in_features, hidden_features * 2, kernel_size=1)
-        self.dwconv = nn.Conv2d(hidden_features, hidden_features, kernel_size=3, stride=1, padding=1, bias=True,
-                                groups=hidden_features)
+        # self.dwconv = nn.Conv2d(hidden_features, hidden_features, kernel_size=3, stride=1, padding=1, bias=True,
+        #                         groups=hidden_features)
+
+        self.dwconv = FDConv(hidden_features, hidden_features, kernel_size=3, stride=1, padding=1, bias=True)
+        
         self.act = act_layer()
         self.fc2 = nn.Conv2d(hidden_features, out_features, kernel_size=1)
         self.drop = nn.Dropout(drop)
