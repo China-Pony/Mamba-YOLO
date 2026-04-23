@@ -8,9 +8,12 @@ FDConv —— Frequency Dynamic Convolution for Dense Image Prediction (CVPR 202
 2. 修复原版在 groups > 1 (包含 depth-wise conv) 时的 reshape 错误,
    所有与"卷积核的输入通道维"相关的张量统一按 in_channels // groups
    构建。
+3. 修复 use_fdconv_if_c_gt 判断逻辑,使用 in_channels_per_group 替代总通道数。
+4. FBM spatial_group 自适应: groups=1 时自动设为 in_channels,提升逐通道频带调制能力。
+5. AMP 兼容: KSM 注意力计算保持与模型权重一致的 dtype,避免验证阶段 dtype 不匹配。
 
 因此本实现可以在 groups=1 / groups>1 / groups==in_channels (DW) 三种情形下
-正确前向,适合用于 RGBlock 的 DW-Conv 替换等场景。
+正确前向,适合用于 RGBlock 的 Conv 替换等场景。
 """
 
 import math
@@ -72,7 +75,6 @@ class KernelSpatialModulation_Global(nn.Module):
                  in_planes_for_input=None):
         """构造 KSM_Global 所需要的各条注意力分支。"""
         super().__init__()
-        # 若未指定输入特征图通道数,则默认与 kernel cin 维一致(即 groups=1 情形)
         if in_planes_for_input is None:
             in_planes_for_input = in_planes
 
@@ -90,14 +92,12 @@ class KernelSpatialModulation_Global(nn.Module):
 
         self.avgpool = nn.AdaptiveAvgPool2d(1)
         self.att_grid = att_grid
-        # 注意: fc 接受原始输入特征(通道数 = in_planes_for_input)
         self.fc = nn.Conv2d(in_planes_for_input, attention_channel, 1, bias=False)
         self.bn = nn.BatchNorm2d(attention_channel)
         self.relu = StarReLU()
 
         self.spatial_freq_decompose = spatial_freq_decompose
 
-        # channel 注意力: 其输出维度对齐 kernel 的 cin 轴(=in_planes)
         if ksm_only_kernel_att:
             self.func_channel = self.skip
         else:
@@ -111,7 +111,6 @@ class KernelSpatialModulation_Global(nn.Module):
                 self.channel_fc = nn.Conv2d(attention_channel, in_planes, 1, bias=True)
             self.func_channel = self.get_channel_attention
 
-        # filter 注意力: depth-wise conv 场景下退化
         if (in_planes == groups and in_planes == out_planes) or self.ksm_only_kernel_att:
             self.func_filter = self.skip
         else:
@@ -121,14 +120,12 @@ class KernelSpatialModulation_Global(nn.Module):
                 self.filter_fc = nn.Conv2d(attention_channel, out_planes, 1, stride=stride, bias=True)
             self.func_filter = self.get_filter_attention
 
-        # spatial 注意力: 1x1 卷积场景下退化
         if kernel_size == 1 or self.ksm_only_kernel_att:
             self.func_spatial = self.skip
         else:
             self.spatial_fc = nn.Conv2d(attention_channel, kernel_size * kernel_size, 1, bias=True)
             self.func_spatial = self.get_spatial_attention
 
-        # kernel 注意力: 在 kernel_num 个基函数间做加权
         if kernel_num == 1:
             self.func_kernel = self.skip
         else:
@@ -256,7 +253,6 @@ class KernelSpatialModulation_Local(nn.Module):
         self.out_n = out_n
         self.channel = channel
         if channel is not None:
-            # 根据通道数自适应 1D 卷积核大小,最小为 1
             k_size = max(1, round((math.log2(max(channel, 2)) / 2) + 0.5) // 2 * 2 + 1)
         self.conv = nn.Conv1d(1, kernel_num * out_n, kernel_size=k_size,
                               padding=(k_size - 1) // 2, bias=False)
@@ -339,7 +335,6 @@ class FrequencyBandModulation(nn.Module):
         else:
             raise NotImplementedError
 
-        # 预计算多个频带的二值 mask 以加速训练
         self.register_buffer('cached_masks', self._precompute_masks(max_size, k_list), persistent=False)
 
     def _precompute_masks(self, max_size, k_list):
@@ -407,7 +402,6 @@ class FrequencyBandModulation(nn.Module):
 
 
 def get_fft2freq(d1, d2, use_rfft=False):
-    """计算 2D (r)fft 后各频点的坐标,并按到原点的距离排序。"""
     freq_h = torch.fft.fftfreq(d1)
     if use_rfft:
         freq_w = torch.fft.rfftfreq(d2)
@@ -431,7 +425,7 @@ class FDConv(nn.Conv2d):
     """Frequency Dynamic Convolution(group-aware 版本)。
 
     - 继承 nn.Conv2d,因此构造签名与 API 完全兼容普通卷积。
-    - 当 min(in, out) <= use_fdconv_if_c_gt 或 kernel_size 不在
+    - 当 in_channels_per_group <= use_fdconv_if_c_gt 或 kernel_size 不在
       use_fdconv_if_k_in 中时,forward 会直接退化为 nn.Conv2d 标准前向。
     - 本版本修复了原实现在 groups > 1 时 kernel cin 轴 reshape 错误的 bug,
       所有涉及到"卷积核输入通道维"的位置均改用 in_channels // groups。
@@ -502,7 +496,8 @@ class FDConv(nn.Conv2d):
             temp = kernel_temp
 
         # 通道/核尺寸不满足条件时,直接走父类的普通 Conv2d
-        if min(self.in_channels, self.out_channels) <= self.use_fdconv_if_c_gt \
+        # 使用 in_channels_per_group 而非总通道数,确保 DW 卷积时正确退化
+        if self.in_channels_per_group <= self.use_fdconv_if_c_gt \
                 or self.kernel_size[0] not in self.use_fdconv_if_k_in:
             return
 
@@ -536,8 +531,13 @@ class FDConv(nn.Conv2d):
         )
 
         # ---- FBM ----
+        # groups=1 且 spatial_group=1 时,所有通道共享同一频带调制(退化为标量缩放),
+        # 自动将 spatial_group 设为 in_channels 以实现逐通道频带调制
         if self.kernel_size[0] in use_fbm_if_k_in or (use_fbm_for_stride and self.stride[0] > 1):
-            self.FBM = FrequencyBandModulation(self.in_channels, **fbm_cfg)
+            _fbm_cfg = dict(fbm_cfg)
+            if self.groups == 1 and _fbm_cfg.get('spatial_group', 1) == 1:
+                _fbm_cfg['spatial_group'] = self.in_channels
+            self.FBM = FrequencyBandModulation(self.in_channels, **_fbm_cfg)
 
         # ---- KSM Local ----
         # group > 1 时 kernel cin=1(DW),此时 LayerNorm(1) 退化为常数输出,
@@ -557,17 +557,15 @@ class FDConv(nn.Conv2d):
     def convert2dftweight(self, convert_param):
         """把 spatial-domain 权重转为 DFT 系数,并(可选)注册为可训练参数。"""
         d1 = self.out_channels
-        d2 = self.in_channels_per_group  # 真正的 kernel cin 维
+        d2 = self.in_channels_per_group
         k1, k2 = self.kernel_size[0], self.kernel_size[1]
 
         freq_indices, _ = get_fft2freq(d1 * k1, d2 * k2, use_rfft=True)
-        # weight 原始形状 (d1, d2, k1, k2),先 permute 为 (d1, k1, d2, k2) 再展开
         weight = self.weight.permute(0, 2, 1, 3).reshape(d1 * k1, d2 * k2)
         weight_rfft = torch.fft.rfft2(weight, dim=(0, 1))
 
         if self.param_reduction < 1:
             num_to_keep = max(1, int(freq_indices.size(1) * self.param_reduction))
-            # 保证能整除 kernel_num,方便后续 reshape
             num_to_keep = max(self.kernel_num, (num_to_keep // self.kernel_num) * self.kernel_num)
             freq_indices = freq_indices[:, :num_to_keep]
             weight_rfft = torch.stack([weight_rfft.real, weight_rfft.imag], dim=-1)
@@ -577,7 +575,6 @@ class FDConv(nn.Conv2d):
             weight_rfft = torch.stack([weight_rfft.real, weight_rfft.imag], dim=-1)[None, ].repeat(
                 self.param_ratio, 1, 1, 1,
             ) / self._denom
-            # 确保频点数能被 kernel_num 整除
             total_freqs = freq_indices.size(1)
             num_to_keep = (total_freqs // self.kernel_num) * self.kernel_num
             if num_to_keep < total_freqs:
@@ -611,7 +608,7 @@ class FDConv(nn.Conv2d):
 
     def forward(self, x):
         """前向: 根据通道/核尺寸条件,选择 FDConv 动态核卷积或退回普通卷积。"""
-        if min(self.in_channels, self.out_channels) <= self.use_fdconv_if_c_gt \
+        if self.in_channels_per_group <= self.use_fdconv_if_c_gt \
                 or self.kernel_size[0] not in self.use_fdconv_if_k_in:
             return super().forward(x)
 
@@ -620,21 +617,21 @@ class FDConv(nn.Conv2d):
         cin_g = self.in_channels_per_group
         k1, k2 = self.kernel_size[0], self.kernel_size[1]
 
-        # 全局上下文
+        # KSM 注意力计算: 保持与模型权重一致的 dtype,
+        # AMP autocast 在训练时自动管理精度(将 sigmoid/tanh 等 upcast 到 float32),
+        # 验证时模型和输入 dtype 一致不会冲突。
         global_x = F.adaptive_avg_pool2d(x, 1)
         channel_attention, filter_attention, spatial_attention, kernel_attention = self.KSM_Global(global_x)
 
-        # 细粒度局部注意力(仅 in_channels_per_group > 1 时启用)
         if self.use_ksm_local:
             if self.groups > 1:
-                # (b, C, 1, 1) -> (b, groups, cin_g, 1, 1) -> 组内平均 -> (b, cin_g, 1, 1)
                 gx_for_local = global_x.view(x.size(0), self.groups, cin_g, 1, 1).mean(dim=1)
             else:
                 gx_for_local = global_x
 
-            hr_att_logit = self.KSM_Local(gx_for_local)  # (b, 1, cin_g, cout*k*k)
+            hr_att_logit = self.KSM_Local(gx_for_local)
             hr_att_logit = hr_att_logit.reshape(x.size(0), 1, cin_g, self.out_channels, k1, k2)
-            hr_att_logit = hr_att_logit.permute(0, 1, 3, 2, 4, 5)  # (b, 1, cout, cin_g, k, k)
+            hr_att_logit = hr_att_logit.permute(0, 1, 3, 2, 4, 5)
             if self.ksm_local_act == 'sigmoid':
                 hr_att = hr_att_logit.sigmoid() * self.att_multi
             elif self.ksm_local_act == 'tanh':
@@ -649,17 +646,10 @@ class FDConv(nn.Conv2d):
 
         # DFT_map: 按 cin_g 构建,与 FDW / indices 对齐;
         # view_as_complex 要求 float32/float64,始终使用 float32 以兼容 AMP。
-        # DFT_map = torch.zeros(
-        #     (b, self.out_channels * k1, cin_g * k2 // 2 + 1, 2),
-        #     device=x.device, dtype=torch.float32,
-        # )
-
-        # 兼容amp
         DFT_map = torch.zeros(
             (b, self.out_channels * k1, cin_g * k2 // 2 + 1, 2),
             device=x.device, dtype=torch.float32,
         )
-
 
         kernel_attention = kernel_attention.reshape(b, self.param_ratio, self.kernel_num, -1)
 
@@ -720,7 +710,6 @@ class FDConv(nn.Conv2d):
 
 
 if __name__ == '__main__':
-    # 快速自测: groups=1 / groups=4 / depth-wise 三种情形都能正常前向
     for g in [1, 4, 64]:
         m = FDConv(in_channels=64, out_channels=64, kernel_size=3, padding=1,
                    groups=g, bias=True)

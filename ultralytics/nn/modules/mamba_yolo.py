@@ -268,9 +268,12 @@ class RGBlock(nn.Module):
             kernel_size=3,
             stride=1,
             padding=1,
-            groups=hidden_features,     # 仍然保持深度可分离特性
+            # groups=hidden_features,     # 仍然保持深度可分离特性
+            groups=1,
             bias=True,
-            kernel_num=4,               # 论文里小模型常用 4，通道大时可改 8
+            # kernel_num=4,               # 论文里小模型常用 4，通道大时可改 8
+            kernel_num=2 if hidden_features > 256 else 4,
+            param_reduction=0.5,
             # reduction=0.0625,
             # use_fdconv_if_c_gt=16,      # hidden<16 时自动回退 nn.Conv2d，对 T 尺度友好
             # use_fbm_if_k_in=[3],        # 3x3 启用 FBM，针对高频信息调制
