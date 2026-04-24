@@ -645,6 +645,7 @@ class FDConv(nn.Conv2d):
     def forward(self, x):
         if min(self.in_channels, self.out_channels) <= self.use_fdconv_if_c_gt or self.kernel_size[0] not in self.use_fdconv_if_k_in:
             return super().forward(x)
+        x = x.float()
         global_x = F.adaptive_avg_pool2d(x, 1)
         channel_attention, filter_attention, spatial_attention, kernel_attention = self.KSM_Global(global_x)
         if self.use_ksm_local:

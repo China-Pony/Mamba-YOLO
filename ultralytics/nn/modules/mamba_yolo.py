@@ -335,7 +335,7 @@ class XSSBlock(nn.Module):
                 bias=False,
                 kernel_num=4,
                 use_fdconv_if_c_gt=16,
-                use_fdconv_if_k_in=[1, 3],
+                use_fdconv_if_k_in=[3],
             ),
             nn.BatchNorm2d(hidden_dim),
             nn.SiLU()
@@ -428,7 +428,7 @@ class VSSBlock(nn.Module):
                 bias=True,
                 kernel_num=4,
                 use_fdconv_if_c_gt=16,
-                use_fdconv_if_k_in=[1, 3],
+                use_fdconv_if_k_in=[3],
             ),
             nn.BatchNorm2d(hidden_dim),
             nn.SiLU()
