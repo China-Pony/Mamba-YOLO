@@ -317,7 +317,23 @@ class RTDETRDecoder(nn.Module):
         self.num_decoder_layers = ndl
 
         # Backbone feature projection
-        self.input_proj = nn.ModuleList(nn.Sequential(nn.Conv2d(x, hd, 1, bias=False), nn.BatchNorm2d(hd)) for x in ch)
+        # self.input_proj = nn.ModuleList(nn.Sequential(nn.Conv2d(x, hd, 1, bias=False), nn.BatchNorm2d(hd)) for x in ch)
+        # ==== 修改后：增加非线性变换层 ====
+        # Backbone feature projection (enhanced for SSM features)
+        self.input_proj = nn.ModuleList(
+            nn.Sequential(
+                nn.Conv2d(x, hd, 1, bias=False),
+                nn.BatchNorm2d(hd),
+                nn.Conv2d(hd, hd, 3, padding=1, bias=False),  # 增加3x3卷积提取空间特征
+                nn.BatchNorm2d(hd),
+                nn.ReLU(inplace=True),
+            ) for x in ch
+        )
+        # 在 input_proj 之后增加
+        self.prenorm = nn.ModuleList(
+            nn.LayerNorm(hd) for _ in ch  # 对每个尺度的特征分别做LayerNorm
+        )
+
         # NOTE: simplified version but it's not consistent with .pt weights.
         # self.input_proj = nn.ModuleList(Conv(x, hd, act=False) for x in ch)
 
@@ -407,21 +423,20 @@ class RTDETRDecoder(nn.Module):
         anchors = anchors.masked_fill(~valid_mask, float("inf"))
         return anchors, valid_mask
 
+    # 在 _get_encoder_input 中（head.py L410附近）：
     def _get_encoder_input(self, x):
-        """Processes and returns encoder inputs by getting projection features from input and concatenating them."""
         # Get projection features
         x = [self.input_proj[i](feat) for i, feat in enumerate(x)]
+        # ==== 添加：特征预归一化 ====
+        x = [self.prenorm[i](feat.permute(0, 2, 3, 1)).permute(0, 3, 1, 2) for i, feat in enumerate(x)]
+        # ==== 结束添加 ====
         # Get encoder inputs
         feats = []
         shapes = []
         for feat in x:
             h, w = feat.shape[2:]
-            # [b, c, h, w] -> [b, h*w, c]
             feats.append(feat.flatten(2).permute(0, 2, 1))
-            # [nl, 2]
             shapes.append([h, w])
-
-        # [b, h*w, c]
         feats = torch.cat(feats, 1)
         return feats, shapes
 

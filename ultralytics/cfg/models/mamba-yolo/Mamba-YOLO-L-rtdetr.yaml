@@ -30,4 +30,13 @@ head:
   - [[-1, 8], 1, Concat, [1]]
   - [-1, 3, XSSBlock, [1024]]
 
-  - [[14, 17, 20], 1, RTDETRDecoder, [nc]]
+  - [[14, 17, 20], 1, RTDETRDecoder, [nc, 256, 100, 4, 4, 3, 512]]
+
+# 对应参数解释：
+#   nc=80         # 类别数
+#   hd=256        # hidden dim（保持默认）
+#   nq=100        # queries数量从300减少到100，降低匹配难度
+#   ndp=4         # decoder points数（保持默认）
+#   nh=4          # attention heads从8减少到4（因为特征通道小）
+#   ndl=3         # decoder layers从6减少到3，简化训练
+#   d_ffn=512     # FFN维度从1024减少到512（与特征容量匹配）
