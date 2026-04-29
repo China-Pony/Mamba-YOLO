@@ -283,7 +283,7 @@ class RTDETRDecoder(nn.Module):
         act=nn.ReLU(),
         eval_idx=-1,
         # Training args
-        nd=100,  # num denoising
+        nd=0,  # num denoising
         label_noise_ratio=0.5,
         box_noise_scale=1.0,
         learnt_init_query=False,
