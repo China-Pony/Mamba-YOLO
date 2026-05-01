@@ -34,6 +34,10 @@ class SS2D(nn.Module):
             bias=False,
             # ======================
             forward_type="v2",
+            # fdconv ===============
+            use_fdconv=False,
+            fdconv_kernel_num=4,
+            fdconv_param_ratio=1,
             **kwargs,
     ):
         """
@@ -69,7 +73,21 @@ class SS2D(nn.Module):
 
         # in proj =======================================
         d_proj = d_expand if self.disable_z else (d_expand * 2)
-        self.in_proj = nn.Conv2d(d_model, d_proj, kernel_size=1, stride=1, groups=1, bias=bias, **factory_kwargs)
+        # self.in_proj = nn.Conv2d(d_model, d_proj, kernel_size=1, stride=1, groups=1, bias=bias, **factory_kwargs)
+        if use_fdconv:
+            from .fdconv import FDConv
+            self.in_proj = FDConv(
+                d_model, d_proj, kernel_size=1, stride=1, padding=0,
+                bias=bias,
+                kernel_num=fdconv_kernel_num,
+                param_ratio=fdconv_param_ratio,
+                use_fdconv_if_c_gt=16,
+                use_fdconv_if_k_in=[1],
+                use_fbm_if_k_in=[],
+                use_ksm_local=True,
+            )
+        else:
+            self.in_proj = nn.Conv2d(d_model, d_proj, kernel_size=1, stride=1, groups=1, bias=bias, **factory_kwargs)
         self.act: nn.Module = nn.GELU()
 
         # conv =======================================
@@ -314,6 +332,7 @@ class XSSBlock(nn.Module):
             # =============================
             use_checkpoint: bool = False,
             post_norm: bool = False,
+            use_fdconv=False,
             **kwargs,
     ):
         super().__init__()
@@ -334,7 +353,8 @@ class XSSBlock(nn.Module):
                                          act_layer=ssm_act_layer,
                                          d_conv=ssm_conv,
                                          conv_bias=ssm_conv_bias,
-                                         dropout=ssm_drop_rate, ) for _ in range(n)))
+                                         dropout=ssm_drop_rate,
+                                         use_fdconv=use_fdconv,    ) for _ in range(n)))
         self.drop_path = DropPath(drop_path)
         self.lsblock = LSBlock(hidden_dim, hidden_dim)
         self.mlp_branch = mlp_ratio > 0
@@ -383,6 +403,7 @@ class VSSBlock(nn.Module):
             # =============================
             use_checkpoint: bool = False,
             post_norm: bool = False,
+            use_fdconv=False,
             **kwargs,
     ):
         super().__init__()
@@ -422,6 +443,7 @@ class VSSBlock(nn.Module):
                 initialize=ssm_init,
                 # ==========================
                 forward_type=forward_type,
+                use_fdconv=use_fdconv,
             )
 
         self.drop_path = DropPath(drop_path)
