@@ -319,7 +319,15 @@ class XSSBlock(nn.Module):
         super().__init__()
 
         self.in_proj = nn.Sequential(
-            nn.Conv2d(in_channels, hidden_dim, kernel_size=1, stride=1, padding=0, bias=False),
+            FDConv(
+                in_channels, hidden_dim, kernel_size=1, stride=1, padding=0,
+                bias=True,
+                kernel_num=4, param_ratio=1,
+                use_fdconv_if_c_gt=16,
+                use_fdconv_if_k_in=[1],
+                use_fbm_if_k_in=[],
+                use_ksm_local=True,
+            ) if use_fdconv else nn.Conv2d(in_channels, hidden_dim, kernel_size=1, stride=1, padding=0, bias=True),
             nn.BatchNorm2d(hidden_dim),
             nn.SiLU()
         ) if in_channels != hidden_dim else nn.Identity()
@@ -392,8 +400,21 @@ class VSSBlock(nn.Module):
         self.post_norm = post_norm
 
         # proj
+        # self.proj_conv = nn.Sequential(
+        #     nn.Conv2d(in_channels, hidden_dim, kernel_size=1, stride=1, padding=0, bias=True),
+        #     nn.BatchNorm2d(hidden_dim),
+        #     nn.SiLU()
+        # )
         self.proj_conv = nn.Sequential(
-            nn.Conv2d(in_channels, hidden_dim, kernel_size=1, stride=1, padding=0, bias=True),
+            FDConv(
+                in_channels, hidden_dim, kernel_size=1, stride=1, padding=0,
+                bias=True,
+                kernel_num=4, param_ratio=1,
+                use_fdconv_if_c_gt=16,
+                use_fdconv_if_k_in=[1],
+                use_fbm_if_k_in=[],
+                use_ksm_local=True,
+            ) if use_fdconv else nn.Conv2d(in_channels, hidden_dim, kernel_size=1, stride=1, padding=0, bias=True),
             nn.BatchNorm2d(hidden_dim),
             nn.SiLU()
         )
