@@ -16,6 +16,8 @@ import math
 # from timm.models.layers import trunc_normal_
 import time
 
+from .conv import Conv
+
 class StarReLU(nn.Module):
     """
     StarReLU: s * relu(x) ** 2 + b
