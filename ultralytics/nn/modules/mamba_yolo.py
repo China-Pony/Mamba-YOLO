@@ -314,6 +314,7 @@ class XSSBlock(nn.Module):
             # =============================
             use_checkpoint: bool = False,
             post_norm: bool = False,
+            use_fdconv=False,
             **kwargs,
     ):
         super().__init__()
@@ -391,6 +392,7 @@ class VSSBlock(nn.Module):
             # =============================
             use_checkpoint: bool = False,
             post_norm: bool = False,
+            use_fdconv=False,
             **kwargs,
     ):
         super().__init__()
