@@ -739,6 +739,35 @@ class FDConv(nn.Conv2d):
             # return input, params, macs
             return input, params, macs + m_ff
 
+class ConvFD(nn.Module):
+    """Conv-BN-Act with FDConv replacing standard Conv2d."""
+    default_act = nn.SiLU()
+
+    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, d=1, act=True,
+                 kernel_num=4, param_ratio=1, use_fbm=True):
+        super().__init__()
+        self.conv = FDConv(
+            c1, c2, k, s,
+            padding=k // 2 if p is None else p,
+            groups=g, dilation=d, bias=False,
+            kernel_num=kernel_num,
+            param_ratio=param_ratio,
+            use_fdconv_if_c_gt=16,
+            use_fdconv_if_k_in=[1, 3],
+            use_fdconv_if_stride_in=[1, 2],
+            use_fbm_if_k_in=[3] if use_fbm else [],
+            use_ksm_local=True,
+        )
+        self.bn = nn.BatchNorm2d(c2)
+        self.act = Conv.default_act if act is True else \
+                   act if isinstance(act, nn.Module) else nn.Identity()
+
+    def forward(self, x):
+        return self.act(self.bn(self.conv(x)))
+
+    def forward_fuse(self, x):
+        return self.act(self.conv(x))
+
 if __name__ == '__main__':
     x = torch.rand(4, 128, 64, 64) * 1
     # m = ODPEConv2d(in_channels=128, out_channels=128, kernel_num=8, kernel_size=3, padding=1, mirror_weight=False, weight_residual=False, use_rfft=True)

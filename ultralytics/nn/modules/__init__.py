@@ -77,7 +77,7 @@ from .transformer import (
 )
 
 from .mamba_yolo import SimpleStem, VisionClueMerge, VSSBlock, XSSBlock
-from .fdconv import FDConv
+from .fdconv import FDConv, ConvFD
 
 __all__ = (
     "Conv",
@@ -138,5 +138,5 @@ __all__ = (
     "CBFuse",
     "CBLinear",
     "Silence",
-    "SimpleStem", "VisionClueMerge", "VSSBlock", "XSSBlock", "FDConv"
+    "SimpleStem", "VisionClueMerge", "VSSBlock", "XSSBlock", "FDConv", "ConvFD"
 )

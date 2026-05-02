@@ -34,6 +34,12 @@ class SS2D(nn.Module):
             bias=False,
             # ======================
             forward_type="v2",
+            use_fdconv=False,        # 快捷开关：同时控制 in_proj + out_proj
+            use_fdconv_in=False,     # 单独控制 in_proj
+            use_fdconv_out=False,    # 单独控制 out_proj
+            use_fdconv_dw=False,     # 单独控制 conv2d (DWConv)
+            fdconv_kernel_num=4,
+            fdconv_param_ratio=1,
             **kwargs,
     ):
         """
@@ -73,16 +79,42 @@ class SS2D(nn.Module):
         self.act: nn.Module = nn.GELU()
 
         # conv =======================================
+        # if self.d_conv > 1:
+        #     self.conv2d = nn.Conv2d(
+        #         in_channels=d_expand,
+        #         out_channels=d_expand,
+        #         groups=d_expand,
+        #         bias=conv_bias,
+        #         kernel_size=d_conv,
+        #         padding=(d_conv - 1) // 2,
+        #         **factory_kwargs,
+        #     )
         if self.d_conv > 1:
-            self.conv2d = nn.Conv2d(
-                in_channels=d_expand,
-                out_channels=d_expand,
-                groups=d_expand,
-                bias=conv_bias,
-                kernel_size=d_conv,
-                padding=(d_conv - 1) // 2,
-                **factory_kwargs,
-            )
+            if use_fdconv or use_fdconv_dw:
+                self.conv2d = FDConv(
+                    in_channels=d_expand,
+                    out_channels=d_expand,
+                    kernel_size=d_conv,
+                    padding=(d_conv - 1) // 2,
+                    groups=d_expand,         # depth-wise
+                    bias=conv_bias,
+                    kernel_num=fdconv_kernel_num,
+                    param_ratio=fdconv_param_ratio,
+                    use_fdconv_if_c_gt=16,
+                    use_fdconv_if_k_in=[3],
+                    use_fbm_if_k_in=[3],     # 3x3 Conv 启用 FBM 频段分解
+                    use_ksm_local=True,
+                )
+            else:
+                self.conv2d = nn.Conv2d(
+                    in_channels=d_expand,
+                    out_channels=d_expand,
+                    groups=d_expand,
+                    bias=conv_bias,
+                    kernel_size=d_conv,
+                    padding=(d_conv - 1) // 2,
+                    **factory_kwargs,
+                )
 
         # rank ratio =====================================
         self.ssm_low_rank = False
